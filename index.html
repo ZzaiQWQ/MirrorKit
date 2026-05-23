@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline Mirror Starter</title>
+    <!--
+        这是通用框架说明页，不是目标网站首页。
+        规则：不管扒什么网站，目标网站内容都放进独立文件夹。
+        入口链接会由本地服务器自动生成，不在这里写死具体网站。
+        换网站时主要改 server.js 和 tools/mirror-assets.js 顶部配置。
+    -->
+    <style>
+        html,
+        body {
+            margin: 0;
+            min-height: 100%;
+            background: #111;
+            color: #eee;
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+        }
+
+        main {
+            max-width: 760px;
+            padding: 48px 24px;
+            line-height: 1.7;
+        }
+
+        code {
+            background: #222;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 2px 6px;
+        }
+
+        a {
+            color: #8bc7ff;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Offline Mirror Starter</h1>
+        <p>外层 <code>index.html</code> 只是框架入口，不保存目标网站首页。</p>
+        <p>当前目标站点：<code id="target-host">读取中...</code></p>
+        <p>当前镜像文件夹：<code id="mirror-name">读取中...</code></p>
+        <p><a id="mirror-entry" href="#">打开当前镜像入口</a></p>
+        <p>换网站时，修改 <code>server.js</code> 和 <code>tools/mirror-assets.js</code> 顶部配置；项目文件夹名字也可以自己改，代码不依赖外层目录名。</p>
+    </main>
+    <script>
+        window.__MIRROR_CONFIG__ = null;
+
+        /*
+            优先使用 server.js 注入进来的当前配置，然后自动生成正确链接。
+        */
+        async function loadMirrorConfig() {
+            if (window.__MIRROR_CONFIG__) return window.__MIRROR_CONFIG__;
+
+            const response = await fetch('/__mirror-config.json', { cache: 'no-store' });
+            if (!response.ok) throw new Error('config request failed');
+            return response.json();
+        }
+
+        loadMirrorConfig().then(config => {
+            document.getElementById('target-host').textContent = config.targetHost;
+            document.getElementById('mirror-name').textContent = config.mirrorName;
+
+            const entry = document.getElementById('mirror-entry');
+            entry.href = config.entryPath;
+            entry.textContent = `打开当前镜像入口：${config.entryPath}`;
+        }).catch(() => {
+            document.getElementById('target-host').textContent = '配置读取失败';
+            document.getElementById('mirror-name').textContent = '配置读取失败';
+
+            const entry = document.getElementById('mirror-entry');
+            entry.removeAttribute('href');
+            entry.textContent = '请通过本地服务器打开页面：http://localhost:3000/';
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+# Node / editor
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+.vscode/
+.idea/
+
+# System files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Downloaded mirror content: do not upload cached copies of websites.
+# The project repository should contain only the tool/framework code.
+/activetheory.net/
+/minecraft.net/
+/example.com/
+/assets/
+/storage.googleapis.com/
+/cdn.jsdelivr.net/
+/www.googletagmanager.com/
+/activetheory-v6.appspot.com/
+/bb-mcp/
+/work
+
+# Generic top-level domain-like mirror folders.
+/*.com/
+/*.net/
+/*.org/
+/*.dev/
+/*.io/
+/*.cn/
+/*.app/
+/*.appspot.com/
+
+# Cache / validation artifacts
+*.bad
+*.tmp
+*.log
