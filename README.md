@@ -18,6 +18,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## 免责声明
 
+完整中英文免责声明见 [DISCLAIMER.md](DISCLAIMER.md)。
+
 本项目仅供学习研究、技术交流和本地测试使用，请勿用于任何违法违规用途。
 
 本工具只是模拟镜像站的本地研究工具，并非目标网站的完整复制版本，也不代表目标网站官方内容。

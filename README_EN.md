@@ -18,6 +18,8 @@ Important: this license only covers the MirrorKit tool code. It does not cover t
 
 ## Disclaimer
 
+For the full bilingual disclaimer, see [DISCLAIMER.md](DISCLAIMER.md).
+
 This project is for learning, research, technical study, and local testing only. Do not use it for any illegal or unauthorized purpose.
 
 MirrorKit is a local research tool that simulates a mirror site. It is not a complete copy of any target website and is not affiliated with any target website.
