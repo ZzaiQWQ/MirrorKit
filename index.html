@@ -36,19 +36,122 @@
         a {
             color: #8bc7ff;
         }
+
+        .lang-switch {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .lang-switch button {
+            cursor: pointer;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #181818;
+            color: #eee;
+            padding: 6px 10px;
+        }
+
+        .lang-switch button[aria-pressed="true"] {
+            border-color: #8bc7ff;
+            color: #8bc7ff;
+        }
     </style>
 </head>
 <body>
     <main>
-        <h1>Offline Mirror Starter</h1>
-        <p>外层 <code>index.html</code> 只是框架入口，不保存目标网站首页。</p>
-        <p>当前目标站点：<code id="target-host">读取中...</code></p>
-        <p>当前镜像文件夹：<code id="mirror-name">读取中...</code></p>
+        <div class="lang-switch" aria-label="Language">
+            <button id="lang-zh" type="button" aria-pressed="true">中文</button>
+            <button id="lang-en" type="button" aria-pressed="false">English</button>
+        </div>
+        <h1 id="page-title">Offline Mirror Starter</h1>
+        <p id="outer-note">外层 <code>index.html</code> 只是框架入口，不保存目标网站首页。</p>
+        <p><span id="target-label">当前目标站点：</span><code id="target-host">读取中...</code></p>
+        <p><span id="mirror-label">当前镜像文件夹：</span><code id="mirror-name">读取中...</code></p>
         <p><a id="mirror-entry" href="#">打开当前镜像入口</a></p>
-        <p>换网站时，修改 <code>server.js</code> 和 <code>tools/mirror-assets.js</code> 顶部配置；项目文件夹名字也可以自己改，代码不依赖外层目录名。</p>
+        <p id="edit-note">换网站时，修改 <code>server.js</code> 和 <code>tools/mirror-assets.js</code> 顶部配置；项目文件夹名字也可以自己改，代码不依赖外层目录名。</p>
     </main>
     <script>
         window.__MIRROR_CONFIG__ = null;
+
+        const pageCopy = {
+            zh: {
+                htmlLang: 'zh-CN',
+                title: 'Offline Mirror Starter',
+                loading: '读取中...',
+                configError: '配置读取失败',
+                outerNote: '外层 <code>index.html</code> 只是框架入口，不保存目标网站首页。',
+                targetLabel: '当前目标站点：',
+                mirrorLabel: '当前镜像文件夹：',
+                entryText: path => `打开当前镜像入口：${path}`,
+                entryFallback: '请通过本地服务器打开页面：http://localhost:3000/',
+                editNote: '换网站时，修改 <code>server.js</code> 和 <code>tools/mirror-assets.js</code> 顶部配置；项目文件夹名字也可以自己改，代码不依赖外层目录名。'
+            },
+            en: {
+                htmlLang: 'en',
+                title: 'Offline Mirror Starter',
+                loading: 'Loading...',
+                configError: 'Failed to read config',
+                outerNote: 'The outer <code>index.html</code> is only the framework entry. It does not store the target website homepage.',
+                targetLabel: 'Current target site: ',
+                mirrorLabel: 'Current mirror folder: ',
+                entryText: path => `Open current mirror entry: ${path}`,
+                entryFallback: 'Open this page through the local server: http://localhost:3000/',
+                editNote: 'To mirror another website, edit the top configuration in <code>server.js</code> and <code>tools/mirror-assets.js</code>. The project folder name can be changed freely.'
+            }
+        };
+
+        let currentLang = localStorage.getItem('mirrorkit-lang') || 'zh';
+        let currentConfig = null;
+        let configFailed = false;
+
+        function getCopy() {
+            return pageCopy[currentLang] || pageCopy.zh;
+        }
+
+        function renderLanguage() {
+            const copy = getCopy();
+            document.documentElement.lang = copy.htmlLang;
+            document.getElementById('lang-zh').setAttribute('aria-pressed', String(currentLang === 'zh'));
+            document.getElementById('lang-en').setAttribute('aria-pressed', String(currentLang === 'en'));
+            document.getElementById('page-title').textContent = copy.title;
+            document.getElementById('outer-note').innerHTML = copy.outerNote;
+            document.getElementById('target-label').textContent = copy.targetLabel;
+            document.getElementById('mirror-label').textContent = copy.mirrorLabel;
+            document.getElementById('edit-note').innerHTML = copy.editNote;
+
+            if (configFailed) {
+                document.getElementById('target-host').textContent = copy.configError;
+                document.getElementById('mirror-name').textContent = copy.configError;
+                const entry = document.getElementById('mirror-entry');
+                entry.removeAttribute('href');
+                entry.textContent = copy.entryFallback;
+                return;
+            }
+
+            if (!currentConfig) {
+                document.getElementById('target-host').textContent = copy.loading;
+                document.getElementById('mirror-name').textContent = copy.loading;
+                document.getElementById('mirror-entry').textContent = copy.loading;
+                return;
+            }
+
+            document.getElementById('target-host').textContent = currentConfig.targetHost;
+            document.getElementById('mirror-name').textContent = currentConfig.mirrorName;
+
+            const entry = document.getElementById('mirror-entry');
+            entry.href = currentConfig.entryPath;
+            entry.textContent = copy.entryText(currentConfig.entryPath);
+        }
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('mirrorkit-lang', lang);
+            renderLanguage();
+        }
+
+        document.getElementById('lang-zh').addEventListener('click', () => setLanguage('zh'));
+        document.getElementById('lang-en').addEventListener('click', () => setLanguage('en'));
 
         /*
             优先使用 server.js 注入进来的当前配置，然后自动生成正确链接。
@@ -61,20 +164,14 @@
             return response.json();
         }
 
+        renderLanguage();
+
         loadMirrorConfig().then(config => {
-            document.getElementById('target-host').textContent = config.targetHost;
-            document.getElementById('mirror-name').textContent = config.mirrorName;
-
-            const entry = document.getElementById('mirror-entry');
-            entry.href = config.entryPath;
-            entry.textContent = `打开当前镜像入口：${config.entryPath}`;
+            currentConfig = config;
+            renderLanguage();
         }).catch(() => {
-            document.getElementById('target-host').textContent = '配置读取失败';
-            document.getElementById('mirror-name').textContent = '配置读取失败';
-
-            const entry = document.getElementById('mirror-entry');
-            entry.removeAttribute('href');
-            entry.textContent = '请通过本地服务器打开页面：http://localhost:3000/';
+            configFailed = true;
+            renderLanguage();
         });
     </script>
 </body>

@@ -1,5 +1,7 @@
 # MirrorKit 使用说明
 
+[中文](README.md) | [English](README_EN.md)
+
 ## 开源协议
 
 本项目使用 GNU Affero General Public License v3.0 or later。
