@@ -105,7 +105,61 @@ node server.js
 
 ## 一、换网站要改哪里
 
-换网站主要改两个文件顶部配置：
+换网站有两种方式：
+
+```text
+方式 A：运行命令时用环境变量临时指定网站，不改代码
+方式 B：直接修改两个文件顶部配置
+```
+
+如果只是临时测试一个网站，推荐先用方式 A。
+
+### 方式 A：用环境变量临时换站
+
+这种方式不需要改 `server.js` 和 `tools/mirror-assets.js`，只在当前命令窗口生效。
+
+CMD 示例：
+
+```bat
+set TARGET_HOST=https://example.com
+set MIRROR_NAME=example.com
+set START_PATH=/
+node server.js
+```
+
+批量下载也可以这样：
+
+```bat
+set TARGET_HOST=https://example.com
+set MIRROR_NAME=example.com
+set START_PATH=/
+node tools\mirror-assets.js
+```
+
+如果入口不是首页，而是某个路径，例如：
+
+```text
+https://example.com/example-path
+```
+
+就把 `START_PATH` 写成：
+
+```bat
+set START_PATH=/example-path
+```
+
+如果要运行隐藏媒体补充工具，并且目标站有单独的远程媒体桶，可以额外指定：
+
+```bat
+set CMS_MEDIA_HOST=https://storage.example.com/example-bucket
+node tools\mirror-cms-media.js
+```
+
+这种方式适合反复测试不同网站，因为代码默认配置不用来回改。
+
+### 方式 B：修改文件顶部配置
+
+如果你想把某个网站固定成默认目标，再改两个文件顶部配置：
 
 ```text
 server.js

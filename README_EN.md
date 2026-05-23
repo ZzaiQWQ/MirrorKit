@@ -105,7 +105,61 @@ Or double-click:
 
 ## 1. How To Change The Target Website
 
-Usually you only need to edit the top configuration in two files:
+There are two ways to change the target website:
+
+```text
+Option A: use environment variables at runtime, without editing code
+Option B: edit the top configuration in two files
+```
+
+For temporary testing, use Option A first.
+
+### Option A: Use Environment Variables
+
+This does not edit `server.js` or `tools/mirror-assets.js`. It only applies to the current command window.
+
+CMD example:
+
+```bat
+set TARGET_HOST=https://example.com
+set MIRROR_NAME=example.com
+set START_PATH=/
+node server.js
+```
+
+Batch download:
+
+```bat
+set TARGET_HOST=https://example.com
+set MIRROR_NAME=example.com
+set START_PATH=/
+node tools\mirror-assets.js
+```
+
+If the entry is not the homepage, for example:
+
+```text
+https://example.com/example-path
+```
+
+set `START_PATH` to:
+
+```bat
+set START_PATH=/example-path
+```
+
+If you need the hidden media helper and the target site has a separate remote media bucket, also set:
+
+```bat
+set CMS_MEDIA_HOST=https://storage.example.com/example-bucket
+node tools\mirror-cms-media.js
+```
+
+This is useful when you test different websites often, because the default code does not need to change.
+
+### Option B: Edit The Top Configuration
+
+If you want one target website to become the default, edit the top configuration in two files:
 
 ```text
 server.js
