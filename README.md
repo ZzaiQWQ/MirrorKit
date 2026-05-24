@@ -644,7 +644,3 @@ echo 中文 > README.md
 ```
 
 这种方式容易把中文写坏。
-
-## 友情链接
-
-[linux.do](https://linux.do/)
