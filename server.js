@@ -42,6 +42,27 @@ const IGNORED_PATH_PREFIXES = [
     '/bb-mcp'
 ];
 
+// NOOP_REMOTE_HOSTS：镜像时默认空跑的统计/广告域名。
+// 这些脚本常见行为是 document.write、跳转跟踪、广告竞价。
+// 在本地镜像里继续执行反而可能把页面主体覆盖成空白，所以直接返回空脚本/空响应。
+const NOOP_REMOTE_HOSTS = new Set([
+    'www.googletagmanager.com',
+    'googleads.g.doubleclick.net',
+    'yads.c.yimg.jp',
+    'yads.yjtag.yahoo.co.jp',
+    'static.criteo.net',
+    'bidder.criteo.com'
+]);
+
+// 有些广告脚本挂在正常 CDN 域名下面，不能按整个域名屏蔽。
+// 所以只在脚本请求命中这些路径关键词时空跑。
+const NOOP_SCRIPT_PATH_PATTERNS = [
+    /\/yads\//i,
+    /\/advertising\//i,
+    /\/ds\/yas\//i,
+    /\/ds\/cl\//i
+];
+
 // ====== 通用规则区：不是某个网站专用，不要随便删 ======
 // 有些站点资源路径带点，例如 /etc.clientlibs/...，它不是远程域名。
 // 这些前缀应当继续拼到 TARGET_HOST 后面去抓。
@@ -132,6 +153,82 @@ function stripMirrorPrefix(reqPath) {
     return reqPath.slice(MIRROR_NAME.length + 1) || '/';
 }
 
+function getTargetPathFromRequestPath(reqPath) {
+    return isMirrorRequest(reqPath) ? stripMirrorPrefix(reqPath) : reqPath;
+}
+
+function getMirroredRemoteHost(reqPath) {
+    const targetPath = getTargetPathFromRequestPath(reqPath);
+    const firstSegment = targetPath.split('/').filter(Boolean)[0];
+
+    if (!firstSegment || !looksLikeMirroredRemoteHost(firstSegment)) {
+        return null;
+    }
+
+    return firstSegment.toLowerCase();
+}
+
+function shouldServeNoopRemote(reqPath) {
+    const host = getMirroredRemoteHost(reqPath);
+    if (host && NOOP_REMOTE_HOSTS.has(host)) {
+        return true;
+    }
+
+    const targetPath = getTargetPathFromRequestPath(reqPath);
+    const ext = path.extname(targetPath).toLowerCase();
+
+    if (ext !== '.js' && ext !== '.mjs') {
+        return false;
+    }
+
+    return NOOP_SCRIPT_PATH_PATTERNS.some(pattern => pattern.test(targetPath));
+}
+
+function serveNoopRemote(req, res, reqPath) {
+    const parsedUrl = new URL(req.url, `http://localhost:${PORT}`);
+    const ext = path.extname(parsedUrl.pathname).toLowerCase();
+    const dest = (req.headers['sec-fetch-dest'] || '').toLowerCase();
+    const accept = (req.headers.accept || '').toLowerCase();
+
+    console.log(`\x1b[36m[Noop] ${reqPath}\x1b[0m`);
+
+    if (dest === 'script' || ext === '.js' || ext === '.mjs') {
+        res.writeHead(200, {
+            'Content-Type': MIME_TYPES['.js'],
+            'Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': '*'
+        });
+        res.end('/* MirrorKit noop remote script */');
+        return;
+    }
+
+    if (dest === 'iframe' || ext === '.html') {
+        res.writeHead(200, {
+            'Content-Type': MIME_TYPES['.html'],
+            'Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': '*'
+        });
+        res.end('<!doctype html><html><head></head><body></body></html>');
+        return;
+    }
+
+    if (accept.includes('application/json') || ext === '.json') {
+        res.writeHead(200, {
+            'Content-Type': MIME_TYPES['.json'],
+            'Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': '*'
+        });
+        res.end('{}');
+        return;
+    }
+
+    res.writeHead(204, {
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*'
+    });
+    res.end();
+}
+
 // 页面路由通常没有扩展名，例如 /about、/cn/about。
 // 本地保存时统一落成 index.html，避免浏览器把无扩展名文件当下载文件。
 function isRoutePath(reqPath) {
@@ -140,6 +237,11 @@ function isRoutePath(reqPath) {
 
 function isHtmlLike(buffer) {
     const head = buffer.subarray(0, 256).toString('utf8').trimStart().toLowerCase();
+    return head.startsWith('<!doctype html') || head.startsWith('<html') || head.includes('<title>');
+}
+
+function isHtmlText(text) {
+    const head = text.slice(0, 512).trimStart().toLowerCase();
     return head.startsWith('<!doctype html') || head.startsWith('<html') || head.includes('<title>');
 }
 
@@ -227,15 +329,11 @@ function serveLocalFile(filePath, res) {
             return;
         }
 
-        const ext = path.extname(filePath).toLowerCase();
-        if (REWRITE_TEXT_EXTS.has(ext) || ext === '') {
-            data = Buffer.from(rewriteTextForLocalMirror(data.toString('utf8')));
-        } else if (EXTERNAL_URL_REWRITE_TEXT_EXTS.has(ext)) {
-            data = Buffer.from(rewriteExternalUrlsForLocalMirror(data.toString('utf8')));
-        }
+        data = transformResponseForLocalMirror(filePath, data);
 
         res.writeHead(200, {
             'Content-Type': getContentType(filePath, data),
+            'Cache-Control': 'no-store',
             'Access-Control-Allow-Origin': '*'
         });
         res.end(data);
@@ -297,18 +395,23 @@ function getLocalUrlPrefixForHost(host, slash) {
     return `${separator}${MIRROR_NAME}${separator}${host}${separator}`;
 }
 
-// 重写所有明确写出来的 http/https 外链前缀。
+// 重写所有明确写出来的外链前缀。
 // 例子：
 // https://cdn.example.com/a.js -> /当前镜像文件夹/cdn.example.com/a.js
+// //cdn.example.com/a.js -> /当前镜像文件夹/cdn.example.com/a.js
 // https://目标站/assets/a.js -> /当前镜像文件夹/assets/a.js
 // 如果 JS 里是 https:\/\/cdn.example.com\/a.js，也保持转义斜杠形式。
 function rewriteExternalUrlsForLocalMirror(text) {
     const plainUrl = /\bhttps?:\/\/([a-z0-9.-]+\.[a-z]{2,})(\/)/gi;
     const escapedUrl = /\bhttps?:\\\/\\\/([a-z0-9.-]+\.[a-z]{2,})(\\\/)/gi;
+    const protocolRelativeUrl = /(^|[^:])\/\/([a-z0-9.-]+\.[a-z]{2,})(\/)/gi;
+    const escapedProtocolRelativeUrl = /(^|[^:])\\\/\\\/([a-z0-9.-]+\.[a-z]{2,})(\\\/)/gi;
 
     return text
         .replace(plainUrl, (match, host, slash) => getLocalUrlPrefixForHost(host, slash))
-        .replace(escapedUrl, (match, host, slash) => getLocalUrlPrefixForHost(host, slash));
+        .replace(escapedUrl, (match, host, slash) => getLocalUrlPrefixForHost(host, slash))
+        .replace(protocolRelativeUrl, (match, prefix, host, slash) => `${prefix}${getLocalUrlPrefixForHost(host, slash)}`)
+        .replace(escapedProtocolRelativeUrl, (match, prefix, host, slash) => `${prefix}${getLocalUrlPrefixForHost(host, slash)}`);
 }
 
 // 把页面里的远程 URL 改成本地镜像 URL。
@@ -325,6 +428,164 @@ function rewriteTextForLocalMirror(text) {
         .replace(assetUrl, (match, host, assetPath) => `/${MIRROR_NAME}/${host}${assetPath}`)
         .replace(rootAsset, (match, prefix, assetPath) => `${prefix}/${MIRROR_NAME}/${assetPath}`)
         .replace(rootRoute, (match, prefix, routePath) => `${prefix}/${MIRROR_NAME}/${routePath}`);
+}
+
+// 注入浏览器端兜底规则。
+// 作用：有些按钮链接不是 HTML 里写死的，而是 JS 运行后才生成。
+// 服务端文本替换抓不到这种情况，所以在页面里加一层点击/表单/window.open 拦截。
+function getLocalNavigationInterceptorScript() {
+    return `<script>
+(function () {
+    if (window.__MIRRORKIT_LINK_INTERCEPTOR__) return;
+    window.__MIRRORKIT_LINK_INTERCEPTOR__ = true;
+
+    var targetHost = ${JSON.stringify(getTargetHostName())};
+    var mirrorName = ${JSON.stringify(MIRROR_NAME)};
+    var localHost = window.location.hostname;
+    var rewriteTimer = null;
+
+    function isIgnoredUrl(url) {
+        return !url || /^(mailto:|tel:|javascript:|data:|blob:|#)/i.test(url);
+    }
+
+    function toLocalUrl(url) {
+        if (isIgnoredUrl(url)) return url;
+
+        var parsed;
+        try {
+            parsed = new URL(url, window.location.href);
+        } catch (err) {
+            return url;
+        }
+
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return url;
+
+        var fullPath = parsed.pathname + parsed.search + parsed.hash;
+        var mirrorPrefix = '/' + mirrorName;
+
+        if (parsed.hostname === localHost) {
+            if (parsed.pathname === mirrorPrefix || parsed.pathname.indexOf(mirrorPrefix + '/') === 0) {
+                return url;
+            }
+
+            return mirrorPrefix + fullPath;
+        }
+
+        if (parsed.hostname === targetHost) {
+            return mirrorPrefix + fullPath;
+        }
+
+        return mirrorPrefix + '/' + parsed.hostname + fullPath;
+    }
+
+    function rewriteElement(element) {
+        if (!element || !element.getAttribute) return;
+
+        ['href', 'action'].forEach(function (attr) {
+            var value = element.getAttribute(attr);
+            var local = toLocalUrl(value);
+
+            if (local && local !== value) {
+                element.setAttribute(attr, local);
+            }
+        });
+    }
+
+    function rewritePageLinks() {
+        document.querySelectorAll('a[href], form[action]').forEach(rewriteElement);
+    }
+
+    function scheduleRewrite() {
+        if (rewriteTimer) return;
+
+        rewriteTimer = window.setTimeout(function () {
+            rewriteTimer = null;
+            rewritePageLinks();
+        }, 50);
+    }
+
+    document.addEventListener('click', function (event) {
+        var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+        if (!link) return;
+
+        var href = link.getAttribute('href');
+        var local = toLocalUrl(href);
+
+        if (local && local !== href) {
+            event.preventDefault();
+            window.location.href = local;
+        }
+    }, true);
+
+    document.addEventListener('submit', function (event) {
+        var form = event.target;
+        if (!form || !form.getAttribute) return;
+
+        var action = form.getAttribute('action') || window.location.href;
+        var local = toLocalUrl(action);
+
+        if (local && local !== action) {
+            form.setAttribute('action', local);
+        }
+    }, true);
+
+    var nativeOpen = window.open;
+    window.open = function (url, name, features) {
+        return nativeOpen.call(window, toLocalUrl(url), name, features);
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', rewritePageLinks);
+    } else {
+        rewritePageLinks();
+    }
+
+    if (window.MutationObserver && document.documentElement) {
+        new MutationObserver(scheduleRewrite).observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+    }
+})();
+</script>`;
+}
+
+function injectLocalNavigationInterceptor(text) {
+    if (!isHtmlText(text) || text.includes('window.__MIRRORKIT_LINK_INTERCEPTOR__')) {
+        return text;
+    }
+
+    const interceptor = getLocalNavigationInterceptorScript();
+
+    if (/<\/head>/i.test(text)) {
+        return text.replace(/<\/head>/i, `${interceptor}\n</head>`);
+    }
+
+    if (/<\/body>/i.test(text)) {
+        return text.replace(/<\/body>/i, `${interceptor}\n</body>`);
+    }
+
+    return text;
+}
+
+function transformResponseForLocalMirror(filePath, data) {
+    const ext = path.extname(filePath).toLowerCase();
+
+    if (REWRITE_TEXT_EXTS.has(ext) || ext === '') {
+        let text = rewriteTextForLocalMirror(data.toString('utf8'));
+
+        if (ext !== '.css') {
+            text = injectLocalNavigationInterceptor(text);
+        }
+
+        return Buffer.from(text);
+    }
+
+    if (EXTERNAL_URL_REWRITE_TEXT_EXTS.has(ext)) {
+        return Buffer.from(rewriteExternalUrlsForLocalMirror(data.toString('utf8')));
+    }
+
+    return data;
 }
 
 async function fetchWithTimeout(url) {
@@ -366,7 +627,7 @@ function getGoogleStorageTargetUrl(reqPath, search) {
 // 根据请求路径生成真正要抓取的远程 URL。
 function getTargetUrl(req, reqPath) {
     const requestUrl = new URL(req.url, `http://localhost:${PORT}`);
-    const targetPath = isMirrorRequest(reqPath) ? stripMirrorPrefix(reqPath) : reqPath;
+    const targetPath = getTargetPathFromRequestPath(reqPath);
     const mirror = getRemoteMirror(targetPath);
 
     if (mirror) {
@@ -411,11 +672,14 @@ async function proxyAndCache(req, res, localPath, reqPath) {
         fs.writeFileSync(localPath, buffer);
         console.log(`\x1b[32m[Saved] ${localPath}\x1b[0m`);
 
+        const responseBuffer = transformResponseForLocalMirror(localPath, buffer);
+
         res.writeHead(200, {
-            'Content-Type': getContentType(localPath, buffer),
+            'Content-Type': getContentType(localPath, responseBuffer),
+            'Cache-Control': 'no-store',
             'Access-Control-Allow-Origin': '*'
         });
-        res.end(buffer);
+        res.end(responseBuffer);
     } catch (err) {
         const status = err.name === 'AbortError' ? 504 : 500;
         console.error(`\x1b[31m[Error] ${req.url}: ${err.message}\x1b[0m`);
@@ -476,6 +740,11 @@ const server = http.createServer(async (req, res) => {
     if (!localPath) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Forbidden');
+        return;
+    }
+
+    if (shouldServeNoopRemote(reqPath)) {
+        serveNoopRemote(req, res, reqPath);
         return;
     }
 
