@@ -642,5 +642,8 @@ text/html
 ```bat
 echo 中文 > README.md
 ```
-
 这种方式容易把中文写坏。
+
+## 八、社区
+
+[LINUX DO](https://linux.do)
